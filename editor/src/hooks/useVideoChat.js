@@ -6,12 +6,9 @@ const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    // Add TURN servers for better connectivity (optional)
-    // {
-    //   urls: 'turn:your-turn-server.com',
-    //   username: 'username',
-    //   credential: 'credential'
-    // }
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ],
 };
 
@@ -43,7 +40,7 @@ export const useVideoChat = (roomId, userName) => {
   const isMountedRef = useRef(true);
   const connectionIdRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
-  const maxReconnectAttempts = 5;
+  const maxReconnectAttempts = 8;
 
   // keep ref synchronized with state
   useEffect(() => { 
@@ -150,8 +147,8 @@ export const useVideoChat = (roomId, userName) => {
     }
   }, []);
 
-  // createPeerConnection - SIMPLIFIED AND STABLE VERSION
-  const createPeerConnection = useCallback((peerId, peerUserName) => {
+  // createPeerConnection - FIXED VERSION with role-based negotiation
+  const createPeerConnection = useCallback((peerId, peerUserName, isInitiator = false) => {
     if (peerConnectionsRef.current.has(peerId)) {
       if (peerUserName) {
         setPeers(prev => {
@@ -164,19 +161,20 @@ export const useVideoChat = (roomId, userName) => {
       return peerConnectionsRef.current.get(peerId);
     }
 
-    console.log(`[PC] creating new peer connection for ${peerId}`);
+    console.log(`[PC] creating new peer connection for ${peerId}, initiator: ${isInitiator}`);
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pc.__peerId = peerId;
+    pc.__isInitiator = isInitiator;
 
-    // Simplified negotiation handling
+    // Only initiate negotiation if we're the initiator
     pc.onnegotiationneeded = async () => {
       try {
-        if (pc.signalingState !== 'stable') {
-          console.debug('[PC] negotiationneeded but signalingState != stable', peerId, pc.signalingState);
+        if (pc.signalingState !== 'stable' || !pc.__isInitiator) {
+          console.debug('[PC] skipping negotiation - not initiator or not stable');
           return;
         }
         
-        console.log(`[PC] negotiation needed for ${peerId}`);
+        console.log(`[PC] negotiation needed for ${peerId} (initiator)`);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         sendToServer({ type: 'offer', to: peerId, data: offer });
@@ -233,8 +231,7 @@ export const useVideoChat = (roomId, userName) => {
       if (pc.iceConnectionState === 'failed') {
         console.warn(`[PC] ICE connection failed for ${peerId}, restarting ICE`);
         try {
-          // Try to recover by creating a new offer
-          if (pc.signalingState === 'stable') {
+          if (pc.signalingState === 'stable' && pc.__isInitiator) {
             pc.createOffer().then(offer => {
               pc.setLocalDescription(offer);
               sendToServer({ type: 'offer', to: peerId, data: offer });
@@ -359,33 +356,32 @@ export const useVideoChat = (roomId, userName) => {
 
           case 'user-list':
             console.log('[WS] received user list:', message.users);
+            // We are the newcomer, so we initiate connections to existing users
             for (const u of message.users) {
-              createPeerConnection(u.userId, u.userName);
+              createPeerConnection(u.userId, u.userName, true); // true = we are initiator
             }
             break;
 
           case 'join':
             console.log('[WS] peer joined:', from, peerUserName);
-            createPeerConnection(from, peerUserName);
+            // Another peer joined, they will initiate connection to us
+            createPeerConnection(from, peerUserName, false); // false = we are responder
             break;
 
           case 'offer': {
             console.log('[WS] offer from', from);
-            const pc = createPeerConnection(from, peerUserName);
+            const pc = peerConnectionsRef.current.get(from) || createPeerConnection(from, peerUserName, false);
             
             try {
+              // Check if we already have a local description (meaning we made an offer too)
+              if (pc.localDescription && pc.localDescription.type === 'offer') {
+                console.log('[WS] glare detected - we also made an offer, being polite and rolling back');
+                await pc.setLocalDescription({ type: 'rollback' });
+                await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
+              }
+              
               await pc.setRemoteDescription(new RTCSessionDescription(data));
               console.log(`[WS] set remote description (offer) for ${from}`);
-
-              // Add tracks after setting remote description
-              const currentStream = isScreenSharing && screenStreamRef.current ? screenStreamRef.current : cameraStreamRef.current;
-              if (currentStream) {
-                currentStream.getTracks().forEach(track => {
-                  if (!pc.getSenders().some(snd => snd.track === track)) {
-                    pc.addTrack(track, currentStream);
-                  }
-                });
-              }
 
               const answer = await pc.createAnswer();
               await pc.setLocalDescription(answer);
@@ -394,17 +390,8 @@ export const useVideoChat = (roomId, userName) => {
 
             } catch (err) {
               console.error('[WS] offer handling failed', err);
-              // Create fresh PC as fallback
-              cleanupPeerConnection(from);
-              const newPc = createPeerConnection(from, peerUserName);
-              try {
-                await newPc.setRemoteDescription(new RTCSessionDescription(data));
-                const answer = await newPc.createAnswer();
-                await newPc.setLocalDescription(answer);
-                sendToServer({ type: 'answer', to: from, data: answer });
-              } catch (retryErr) {
-                console.error('[WS] retry also failed', retryErr);
-              }
+              // Send negotiation failed message to trigger retry
+              sendToServer({ type: 'negotiation-failed', to: from });
             }
             break;
           }
@@ -418,8 +405,23 @@ export const useVideoChat = (roomId, userName) => {
             }
 
             try {
-              await pc.setRemoteDescription(new RTCSessionDescription(data));
-              console.log(`[WS] applied remote answer for ${from}`);
+              // Only set remote description if we're in the right state
+              if (pc.signalingState === 'have-local-offer') {
+                await pc.setRemoteDescription(new RTCSessionDescription(data));
+                console.log(`[WS] applied remote answer for ${from}`);
+              } else {
+                console.warn(`[WS] ignoring answer - wrong signaling state: ${pc.signalingState}`);
+                // Queue the answer and try again later
+                pendingRemoteDescriptions.current.set(from, data);
+                setTimeout(() => {
+                  const queuedAnswer = pendingRemoteDescriptions.current.get(from);
+                  if (queuedAnswer && pc.signalingState === 'have-local-offer') {
+                    pc.setRemoteDescription(new RTCSessionDescription(queuedAnswer))
+                      .then(() => pendingRemoteDescriptions.current.delete(from))
+                      .catch(err => console.warn('[WS] queued answer apply failed', err));
+                  }
+                }, 1000);
+              }
 
               // Process any queued ICE candidates
               const queuedCandidates = pendingIceCandidates.current.get(from) || [];
@@ -433,8 +435,7 @@ export const useVideoChat = (roomId, userName) => {
               pendingIceCandidates.current.delete(from);
               
             } catch (err) {
-              console.warn('[WS] setRemoteDescription(answer) failed, will retry', err);
-              pendingRemoteDescriptions.current.set(from, data);
+              console.warn('[WS] setRemoteDescription(answer) failed', err);
             }
             break;
           }
@@ -486,6 +487,15 @@ export const useVideoChat = (roomId, userName) => {
             break;
           }
 
+          case 'negotiation-failed': {
+            console.warn('[WS] negotiation failed with', from, 'recreating connection');
+            cleanupPeerConnection(from);
+            // Retry connection but reverse roles
+            const wasInitiator = peerConnectionsRef.current.get(from)?.__isInitiator;
+            createPeerConnection(from, peerUserName, !wasInitiator);
+            break;
+          }
+
           default:
             console.log('[WS] unknown type', type);
             break;
@@ -512,7 +522,7 @@ export const useVideoChat = (roomId, userName) => {
       // Attempt reconnection
       if (isMountedRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
         reconnectAttemptsRef.current++;
-        const delay = Math.min(3000, reconnectAttemptsRef.current * 1000);
+        const delay = Math.min(5000, reconnectAttemptsRef.current * 1000);
         console.log(`[WS] attempting reconnection in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
         
         setTimeout(() => {
@@ -689,6 +699,7 @@ export const useVideoChat = (roomId, userName) => {
 
   const reconnect = useCallback(() => {
     if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+      reconnectAttemptsRef.current = 0;
       setupWebSocket();
     }
   }, [setupWebSocket]);
