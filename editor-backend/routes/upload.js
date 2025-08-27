@@ -5,8 +5,9 @@ const path = require('path');
 const fs = require('fs');
 const AdmZip = require('adm-zip');
 const { broadcastMessageToRoom } = require('../websockets/chat');
-
+const cors = require('cors');
 const router = express.Router();
+const corsOptions = { origin: true, credentials: true };
 
 // Limits
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB per file
@@ -120,4 +121,3 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
 });
 
 module.exports = router;
-
