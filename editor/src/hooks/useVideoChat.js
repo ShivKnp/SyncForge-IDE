@@ -244,7 +244,6 @@ export const useVideoChat = (roomId, userName) => {
   // WebSocket connection management - SINGLE INSTANCE with global tracking
   const setupWebSocket = useCallback(() => {
     if (!roomId || typeof userName !== 'string' || userName.trim() === '' || !isMountedRef.current) return;
-
     // Initialize room tracking
     if (!activeConnections.has(roomId)) {
       activeConnections.set(roomId, new Set());
@@ -258,9 +257,10 @@ export const useVideoChat = (roomId, userName) => {
     }
 
     const protocol = 'wss'; // Render uses HTTPS/WSS
-  const backendHost = 'syncforge-ide.onrender.com'; // Your Render backend
-  const backendPort = 8080; // Your Render port
-  const wsUrl = `${protocol}://${backendHost}:${backendPort}/video/${roomId}`;
+  const backendHost = 'syncforge-ide.onrender.com';
+  const wsUrl = `${protocol}://${backendHost}/video/${roomId}`;
+
+  console.log('Connecting to WebSocket:', wsUrl); /
 
     // Close existing connection if any
     if (wsRef.current) {
@@ -684,4 +684,5 @@ export const useVideoChat = (roomId, userName) => {
   };
 
 };
+
 
