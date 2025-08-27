@@ -257,9 +257,10 @@ export const useVideoChat = (roomId, userName) => {
       return;
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const backendPort = 8080;
-    const wsUrl = `${protocol}://${window.location.hostname}:${backendPort}/video/${roomId}`;
+    const protocol = 'wss'; // Render uses HTTPS/WSS
+  const backendHost = 'syncforge-ide.onrender.com'; // Your Render backend
+  const backendPort = 8080; // Your Render port
+  const wsUrl = `${protocol}://${backendHost}:${backendPort}/video/${roomId}`;
 
     // Close existing connection if any
     if (wsRef.current) {
@@ -681,4 +682,5 @@ export const useVideoChat = (roomId, userName) => {
     hasCamera: !!cameraStreamRef.current,
     getCurrentStream: getDisplayStream,
   };
+
 };
