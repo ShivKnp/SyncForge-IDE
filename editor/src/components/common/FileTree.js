@@ -84,70 +84,38 @@ const TreeNode = ({
   };
 
   // File type badges
-  const getFileBadge = (fileName) => {
-    if (!fileName.includes('.')) return null;
-    
-    const extension = fileName.split('.').pop().toLowerCase();
-    const badgeMap = {
-      cpp: { 
-        text: 'C++', 
-        color: 'bg-blue-900/40 text-blue-300' 
-      },
-      java: { 
-        text: 'Java', 
-        color: 'bg-amber-900/40 text-amber-300' 
-      },
-      c: { 
-        text: 'C', 
-        color: 'bg-slate-700 text-slate-300' 
-      },
-      txt: { 
-        text: 'Text', 
-        color: 'bg-slate-700 text-slate-300' 
-      },
-      ts: { 
-        text: 'TS', 
-        color: 'bg-blue-900/40 text-blue-300' 
-      },
-      jsx: { 
-        text: 'JSX', 
-        color: 'bg-cyan-900/40 text-cyan-300' 
-      },
-      tsx: { 
-        text: 'TSX', 
-        color: 'bg-blue-900/40 text-blue-300' 
-      },
-      html: { 
-        text: 'HTML', 
-        color: 'bg-orange-900/40 text-orange-300' 
-      },
-      css: { 
-        text: 'CSS', 
-        color: 'bg-indigo-900/40 text-indigo-300' 
-      },
-      py: { 
-        text: 'PY', 
-        color: 'bg-blue-900/40 text-blue-300' 
-      },
-      json: { 
-        text: 'JSON', 
-        color: 'bg-slate-700 text-slate-300' 
-      },
-      md: { 
-        text: 'MD', 
-        color: 'bg-slate-700 text-slate-300' 
-      },
-    };
-    
-    const badge = badgeMap[extension];
-    if (!badge) return null;
-    
-    return (
-      <span className={`text-xs px-1.5 py-0.5 rounded ${badge.color}`}>
-        {badge.text}
-      </span>
-    );
+  // FileTree.js - replace the getFileBadge function with this safe version
+const getFileBadge = (fileName) => {
+  // defensive: ensure fileName is a string
+  if (!fileName || typeof fileName !== 'string') return null;
+  if (!fileName.includes('.')) return null;
+
+  const extension = fileName.split('.').pop().toLowerCase();
+  const badgeMap = {
+    cpp: { text: 'C++', color: 'bg-blue-900/40 text-blue-300' },
+    java: { text: 'Java', color: 'bg-amber-900/40 text-amber-300' },
+    c: { text: 'C', color: 'bg-slate-700 text-slate-300' },
+    txt: { text: 'Text', color: 'bg-slate-700 text-slate-300' },
+    ts: { text: 'TS', color: 'bg-blue-900/40 text-blue-300' },
+    jsx: { text: 'JSX', color: 'bg-cyan-900/40 text-cyan-300' },
+    tsx: { text: 'TSX', color: 'bg-blue-900/40 text-blue-300' },
+    html: { text: 'HTML', color: 'bg-orange-900/40 text-orange-300' },
+    css: { text: 'CSS', color: 'bg-indigo-900/40 text-indigo-300' },
+    py: { text: 'PY', color: 'bg-blue-900/40 text-blue-300' },
+    json: { text: 'JSON', color: 'bg-slate-700 text-slate-300' },
+    md: { text: 'MD', color: 'bg-slate-700 text-slate-300' },
   };
+
+  const badge = badgeMap[extension];
+  if (!badge) return null;
+
+  return (
+    <span className={`text-xs px-1.5 py-0.5 rounded ${badge.color}`}>
+      {badge.text}
+    </span>
+  );
+};
+
 
   // File status indicators
   const getStatusIndicator = (node) => {
