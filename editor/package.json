@@ -1,0 +1,71 @@
+{
+  "name": "editor",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@ant-design/icons": "^5.3.6",
+    "@craco/craco": "^7.1.0",
+    "@monaco-editor/react": "^4.7.0",
+    "adm-zip": "^0.5.16",
+    "antd": "^5.27.1",
+    "axios": "^1.6.8",
+    "crypto-browserify": "^3.12.1",
+    "dotenv": "^17.2.1",
+    "framer-motion": "^12.23.12",
+    "jszip": "^3.10.1",
+    "monaco-editor": "^0.44.0",
+    "monaco-editor-webpack-plugin": "^7.0.1",
+    "os-browserify": "^0.3.0",
+    "path-browserify": "^1.0.1",
+    "re-resizable": "^6.3.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-draggable": "^4.4.3",
+    "react-icons": "^4.12.0",
+    "react-monaco-editor": "^0.55.0",
+    "react-router-dom": "^6.22.3",
+    "react-scripts": "^5.0.1",
+    "reconnecting-websocket": "^4.4.0",
+    "sharedb": "^1.3.4",
+    "stream-browserify": "^3.0.0",
+    "url": "^0.11.4",
+    "uuid": "^9.0.1",
+    "web-vitals": "^5.1.0",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0"
+  },
+  "scripts": {
+    "start": "set NODE_OPTIONS=--openssl-legacy-provider && craco start",
+    "build": "craco build",
+    "test": "craco test",
+    "eject": "react-scripts eject"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/jest": "^30.0.0",
+    "@types/testing-library__react": "^10.0.1",
+    "autoprefixer": "^10.4.21",
+    "jest": "^27.5.1",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "proxy": "http://localhost:8080",
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
