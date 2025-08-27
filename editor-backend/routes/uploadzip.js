@@ -6,9 +6,9 @@ const fs = require('fs');
 const fsPromises = require('fs').promises;
 const AdmZip = require('adm-zip');
 const { broadcastMessageToRoom } = require('../websockets/chat') || (() => { return {}; });
-
+const cors = require('cors');
 const router = express.Router();
-
+const corsOptions = { origin: true, credentials: true };
 // Temp upload storage
 const tmpUploadDir = path.join(__dirname, '..', 'tmp-uploads');
 if (!fs.existsSync(tmpUploadDir)) fs.mkdirSync(tmpUploadDir, { recursive: true });
@@ -107,4 +107,3 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
 });
 
 module.exports = router;
-
