@@ -260,7 +260,7 @@ export const useVideoChat = (roomId, userName) => {
   const backendHost = 'syncforge-ide.onrender.com';
   const wsUrl = `${protocol}://${backendHost}/video/${roomId}`;
 
-  console.log('Connecting to WebSocket:', wsUrl); /
+  console.log('Connecting to WebSocket:', wsUrl);
 
     // Close existing connection if any
     if (wsRef.current) {
@@ -684,5 +684,6 @@ export const useVideoChat = (roomId, userName) => {
   };
 
 };
+
 
 
