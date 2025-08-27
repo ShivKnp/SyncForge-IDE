@@ -35,7 +35,7 @@ const sanitizeEntryName = (entryName) => {
   const normalized = path.normalize(entryName).replace(/^(\.\.(\/|\\|$))+/, '');
   return normalized;
 };
-
+router.options('/:id/upload', cors(corsOptions));
 router.post('/:id/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).send('No file uploaded.');
@@ -107,3 +107,4 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
 });
 
 module.exports = router;
+
