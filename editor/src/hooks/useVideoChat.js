@@ -6,6 +6,12 @@ const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    // Add TURN servers for better connectivity (optional)
+    // {
+    //   urls: 'turn:your-turn-server.com',
+    //   username: 'username',
+    //   credential: 'credential'
+    // }
   ],
 };
 
@@ -24,6 +30,7 @@ export const useVideoChat = (roomId, userName) => {
   const [pinnedPeerId, setPinnedPeerId] = useState(null);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [playbackEnabled, setPlaybackEnabled] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('disconnected');
 
   // refs for stability
   const wsRef = useRef(null);
@@ -32,8 +39,11 @@ export const useVideoChat = (roomId, userName) => {
   const screenStreamRef = useRef(null);
   const localStreamRef = useRef(null);
   const pendingRemoteDescriptions = useRef(new Map());
+  const pendingIceCandidates = useRef(new Map());
   const isMountedRef = useRef(true);
   const connectionIdRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 5;
 
   // keep ref synchronized with state
   useEffect(() => { 
@@ -64,7 +74,15 @@ export const useVideoChat = (roomId, userName) => {
       }
       
       for (const [peerId, pc] of peerConnectionsRef.current.entries()) {
-        try { pc.close(); } catch (e) {}
+        try { 
+          pc.onnegotiationneeded = null;
+          pc.ontrack = null;
+          pc.onicecandidate = null;
+          pc.onconnectionstatechange = null;
+          pc.oniceconnectionstatechange = null;
+          pc.onsignalingstatechange = null;
+          pc.close(); 
+        } catch (e) {}
       }
       peerConnectionsRef.current.clear();
       
@@ -82,6 +100,7 @@ export const useVideoChat = (roomId, userName) => {
     try {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.warn('[useVideoChat] WebSocket not ready for sending');
         return false;
       }
       ws.send(JSON.stringify(message));
@@ -96,10 +115,19 @@ export const useVideoChat = (roomId, userName) => {
   const cleanupPeerConnection = useCallback((peerId) => {
     const pc = peerConnectionsRef.current.get(peerId);
     if (pc) {
-      try { pc.close(); } catch (e) {}
+      try { 
+        pc.onnegotiationneeded = null;
+        pc.ontrack = null;
+        pc.onicecandidate = null;
+        pc.onconnectionstatechange = null;
+        pc.oniceconnectionstatechange = null;
+        pc.onsignalingstatechange = null;
+        pc.close(); 
+      } catch (e) {}
       peerConnectionsRef.current.delete(peerId);
     }
     pendingRemoteDescriptions.current.delete(peerId);
+    pendingIceCandidates.current.delete(peerId);
     setPeers(prev => {
       const m = new Map(prev);
       m.delete(peerId);
@@ -109,11 +137,12 @@ export const useVideoChat = (roomId, userName) => {
 
   // Helper to replace video track
   const replaceVideoTrack = useCallback(async (newTrack) => {
-    for (const pc of peerConnectionsRef.current.values()) {
+    for (const [peerId, pc] of peerConnectionsRef.current.entries()) {
       const sender = pc.getSenders().find(s => s.track?.kind === 'video');
       if (sender && newTrack) {
         try {
           await sender.replaceTrack(newTrack);
+          console.log(`[useVideoChat] replaced video track for peer ${peerId}`);
         } catch (err) {
           console.warn('replaceTrack failed', err);
         }
@@ -121,27 +150,25 @@ export const useVideoChat = (roomId, userName) => {
     }
   }, []);
 
-  // createPeerConnection - FIXED VERSION
+  // createPeerConnection - SIMPLIFIED AND STABLE VERSION
   const createPeerConnection = useCallback((peerId, peerUserName) => {
-
     if (peerConnectionsRef.current.has(peerId)) {
-  // PeerConnection already exists — update the stored userName so late name updates
-  // (e.g. join messages that arrive after initial anon-join) are reflected in the UI.
-  if (peerUserName) {
-    setPeers(prev => {
-      const m = new Map(prev);
-      const prevEntry = m.get(peerId) || {};
-      m.set(peerId, { ...prevEntry, userName: peerUserName });
-      return m;
-    });
-  }
-  return peerConnectionsRef.current.get(peerId);
-}
+      if (peerUserName) {
+        setPeers(prev => {
+          const m = new Map(prev);
+          const prevEntry = m.get(peerId) || {};
+          m.set(peerId, { ...prevEntry, userName: peerUserName });
+          return m;
+        });
+      }
+      return peerConnectionsRef.current.get(peerId);
+    }
 
+    console.log(`[PC] creating new peer connection for ${peerId}`);
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pc.__peerId = peerId;
 
-    // FIXED: Better negotiation handling
+    // Simplified negotiation handling
     pc.onnegotiationneeded = async () => {
       try {
         if (pc.signalingState !== 'stable') {
@@ -149,13 +176,11 @@ export const useVideoChat = (roomId, userName) => {
           return;
         }
         
-        // Add a small delay to avoid race conditions
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
+        console.log(`[PC] negotiation needed for ${peerId}`);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         sendToServer({ type: 'offer', to: peerId, data: offer });
-        console.debug('[PC] sent offer to', peerId);
+        console.log(`[PC] sent offer to ${peerId}`);
       } catch (err) {
         console.warn('[PC] negotiationneeded error', err);
       }
@@ -164,6 +189,8 @@ export const useVideoChat = (roomId, userName) => {
     pc.ontrack = (event) => {
       if (!isMountedRef.current) return;
       
+      console.log(`[PC] ontrack from ${peerId}`, event.streams, event.track);
+      
       let incoming = null;
       if (event.streams && event.streams.length > 0) {
         incoming = event.streams[0];
@@ -171,79 +198,95 @@ export const useVideoChat = (roomId, userName) => {
         incoming = new MediaStream();
         if (event.track) incoming.addTrack(event.track);
       }
-      console.debug('[useVideoChat] ontrack from', peerId, 'tracks:', incoming.getTracks().map(t => t.kind));
       
       setPeers(prev => {
         const m = new Map(prev);
         const prevEntry = m.get(peerId) || {};
-        m.set(peerId, { ...prevEntry, id: peerId, userName: peerUserName, stream: incoming });
+        m.set(peerId, { 
+          ...prevEntry, 
+          id: peerId, 
+          userName: peerUserName, 
+          stream: incoming,
+          hasVideo: incoming.getVideoTracks().length > 0,
+          hasAudio: incoming.getAudioTracks().length > 0
+        });
         return m;
       });
     };
 
     pc.onicecandidate = (ev) => {
-      if (ev.candidate) sendToServer({ type: 'ice-candidate', to: peerId, data: ev.candidate });
+      if (ev.candidate) {
+        console.log(`[PC] ICE candidate for ${peerId}`);
+        sendToServer({ type: 'ice-candidate', to: peerId, data: ev.candidate });
+      }
     };
 
     pc.onconnectionstatechange = () => {
-      console.debug('[PC] connectionState', peerId, pc.connectionState);
+      console.log(`[PC] ${peerId} connection state: ${pc.connectionState}`);
+      if (pc.connectionState === 'connected') {
+        setConnectionStatus('connected');
+      }
     };
 
-    // FIXED: Better ICE connection handling
     pc.oniceconnectionstatechange = () => {
-      console.debug('[PC] iceConnectionState', peerId, pc.iceConnectionState);
-      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-        console.warn('[PC] ICE connection failed, restarting ICE');
+      console.log(`[PC] ${peerId} ICE connection state: ${pc.iceConnectionState}`);
+      if (pc.iceConnectionState === 'failed') {
+        console.warn(`[PC] ICE connection failed for ${peerId}, restarting ICE`);
         try {
-          if (pc.restartIce) {
-            pc.restartIce();
+          // Try to recover by creating a new offer
+          if (pc.signalingState === 'stable') {
+            pc.createOffer().then(offer => {
+              pc.setLocalDescription(offer);
+              sendToServer({ type: 'offer', to: peerId, data: offer });
+            });
           }
         } catch (restartErr) {
-          console.warn('[PC] restartIce failed', restartErr);
+          console.warn('[PC] ICE restart failed', restartErr);
         }
       }
     };
 
-    pc.onsignalingstatechange = () => {
-      const pending = pendingRemoteDescriptions.current.get(peerId);
-      if (pending && (pc.signalingState === 'have-local-offer' || pc.signalingState === 'have-local-pranswer')) {
-        console.debug('[PC] applying queued remote answer for', peerId, 'state', pc.signalingState);
-        pc.setRemoteDescription(new RTCSessionDescription(pending))
-          .then(() => pendingRemoteDescriptions.current.delete(peerId))
-          .catch(err => console.warn('[PC] queued remote desc apply failed', peerId, err));
-      }
-    };
-
-    // FIXED: Add tracks AFTER creating the peer connection with delay
-    setTimeout(() => {
-      const currentStream = isScreenSharing && screenStreamRef.current ? screenStreamRef.current : cameraStreamRef.current;
-      if (currentStream) {
+    // Add tracks immediately
+    const currentStream = isScreenSharing && screenStreamRef.current ? screenStreamRef.current : cameraStreamRef.current;
+    if (currentStream) {
+      currentStream.getTracks().forEach(track => {
         try {
-          currentStream.getTracks().forEach(track => {
-            if (!pc.getSenders().some(snd => snd.track === track)) {
-              pc.addTrack(track, currentStream);
-            }
-          });
+          if (!pc.getSenders().some(s => s.track === track)) {
+            pc.addTrack(track, currentStream);
+            console.log(`[PC] added ${track.kind} track to ${peerId}`);
+          }
         } catch (err) {
-          console.warn('[useVideoChat] addTrack failed', err);
+          console.warn(`[PC] addTrack failed for ${peerId}`, err);
         }
-      }
-    }, 200);
+      });
+    }
 
     peerConnectionsRef.current.set(peerId, pc);
+    
+    // Initialize peer in state
     setPeers(prev => {
       const m = new Map(prev);
-      if (!m.has(peerId)) m.set(peerId, { id: peerId, userName: peerUserName, stream: new MediaStream() });
-      else m.set(peerId, { ...m.get(peerId), userName: peerUserName });
+      if (!m.has(peerId)) {
+        m.set(peerId, { 
+          id: peerId, 
+          userName: peerUserName, 
+          stream: new MediaStream(),
+          hasVideo: false,
+          hasAudio: false
+        });
+      } else {
+        m.set(peerId, { ...m.get(peerId), userName: peerUserName });
+      }
       return m;
     });
 
     return pc;
   }, [sendToServer, isScreenSharing]);
 
-  // WebSocket connection management - SINGLE INSTANCE with global tracking
+  // WebSocket connection management
   const setupWebSocket = useCallback(() => {
     if (!roomId || typeof userName !== 'string' || userName.trim() === '' || !isMountedRef.current) return;
+
     // Initialize room tracking
     if (!activeConnections.has(roomId)) {
       activeConnections.set(roomId, new Set());
@@ -256,11 +299,12 @@ export const useVideoChat = (roomId, userName) => {
       return;
     }
 
-    const protocol = 'wss'; // Render uses HTTPS/WSS
-  const backendHost = 'syncforge-ide.onrender.com';
-  const wsUrl = `${protocol}://${backendHost}/video/${roomId}`;
+    // Use Render backend without port
+    const protocol = 'wss';
+    const backendHost = 'syncforge-ide.onrender.com';
+    const wsUrl = `${protocol}://${backendHost}/video/${roomId}`;
 
-  console.log('Connecting to WebSocket:', wsUrl);
+    console.log('[useVideoChat] opening ws', wsUrl);
 
     // Close existing connection if any
     if (wsRef.current) {
@@ -276,14 +320,15 @@ export const useVideoChat = (roomId, userName) => {
     connectionIdRef.current = Date.now() + Math.random().toString(36).substr(2, 9);
     roomConnections.add(connectionIdRef.current);
 
-    console.debug('[useVideoChat] opening ws', wsUrl);
-
     ws.onopen = () => {
       if (!isMountedRef.current) {
         ws.close();
         return;
       }
-      console.debug('[WS] connected');
+      console.log('[WS] connected successfully');
+      setConnectionStatus('connected');
+      reconnectAttemptsRef.current = 0;
+      
       try { 
         ws.send(JSON.stringify({ type: 'join', name: userName })); 
         ws.send(JSON.stringify({ type: 'media-update', data: { audio: isMicOn, video: isCameraOn } }));
@@ -302,8 +347,9 @@ export const useVideoChat = (roomId, userName) => {
         console.warn('[WS] invalid JSON', e); 
         return; 
       }
+      
       const { from, type, data, name: peerUserName } = message;
-      console.debug('[WS] receive', type, 'from', from);
+      console.log('[WS] receive', type, 'from', from);
 
       try {
         switch (type) {
@@ -312,106 +358,82 @@ export const useVideoChat = (roomId, userName) => {
             break;
 
           case 'user-list':
+            console.log('[WS] received user list:', message.users);
             for (const u of message.users) {
               createPeerConnection(u.userId, u.userName);
             }
             break;
 
           case 'join':
+            console.log('[WS] peer joined:', from, peerUserName);
             createPeerConnection(from, peerUserName);
             break;
 
           case 'offer': {
-            console.debug('[WS] offer from', from);
+            console.log('[WS] offer from', from);
             const pc = createPeerConnection(from, peerUserName);
             
-            // FIXED: Better offer handling with rollback
-            if (pc.signalingState !== 'stable') {
-              console.warn('[WS] glare detected - rolling back for polite peer');
-              try {
-                await pc.setLocalDescription({ type: 'rollback' });
-              } catch (rollbackErr) {
-                console.warn('[WS] rollback failed, creating new PC', rollbackErr);
-                // Create a fresh PC if rollback fails
-                cleanupPeerConnection(from);
-                const newPc = createPeerConnection(from, peerUserName);
-                await newPc.setRemoteDescription(new RTCSessionDescription(data));
-                const answer = await newPc.createAnswer();
-                await newPc.setLocalDescription(answer);
-                sendToServer({ type: 'answer', to: from, data: answer });
-                break;
-              }
-            }
-
             try {
               await pc.setRemoteDescription(new RTCSessionDescription(data));
-            } catch (err) {
-              console.error('[WS] setRemoteDescription(offer) failed', err);
-              break;
-            }
+              console.log(`[WS] set remote description (offer) for ${from}`);
 
-            // FIXED: Add tracks after setting remote description
-            const currentStream = isScreenSharing && screenStreamRef.current ? screenStreamRef.current : cameraStreamRef.current;
-            if (currentStream) {
-              try {
+              // Add tracks after setting remote description
+              const currentStream = isScreenSharing && screenStreamRef.current ? screenStreamRef.current : cameraStreamRef.current;
+              if (currentStream) {
                 currentStream.getTracks().forEach(track => {
                   if (!pc.getSenders().some(snd => snd.track === track)) {
                     pc.addTrack(track, currentStream);
                   }
                 });
-              } catch (err) { console.warn('[WS] addTrack before answer failed', err); }
-            }
+              }
 
-            try {
               const answer = await pc.createAnswer();
               await pc.setLocalDescription(answer);
               sendToServer({ type: 'answer', to: from, data: answer });
-              console.debug('[WS] answered offer to', from);
+              console.log(`[WS] answered offer to ${from}`);
+
             } catch (err) {
-              console.error('[WS] createAnswer failed', err);
+              console.error('[WS] offer handling failed', err);
+              // Create fresh PC as fallback
+              cleanupPeerConnection(from);
+              const newPc = createPeerConnection(from, peerUserName);
+              try {
+                await newPc.setRemoteDescription(new RTCSessionDescription(data));
+                const answer = await newPc.createAnswer();
+                await newPc.setLocalDescription(answer);
+                sendToServer({ type: 'answer', to: from, data: answer });
+              } catch (retryErr) {
+                console.error('[WS] retry also failed', retryErr);
+              }
             }
             break;
           }
 
           case 'answer': {
-            console.debug('[WS] answer from', from);
+            console.log('[WS] answer from', from);
             const pc = peerConnectionsRef.current.get(from);
             if (!pc) { 
               console.warn('[WS] answer for unknown pc', from); 
               break; 
             }
 
-            // FIXED: Better answer handling with retry logic
-            const applyAnswer = async (answerData) => {
-              try {
-                await pc.setRemoteDescription(new RTCSessionDescription(answerData));
-                console.debug('[WS] applied remote answer for', from);
-                pendingRemoteDescriptions.current.delete(from);
-              } catch (err) {
-                console.warn('[WS] setRemoteDescription(answer) failed, will retry', err);
-                
-                // Retry after a delay with fresh PC if needed
-                setTimeout(async () => {
-                  if (pc.signalingState === 'have-local-offer' || pc.signalingState === 'have-local-pranswer') {
-                    try {
-                      await pc.setRemoteDescription(new RTCSessionDescription(answerData));
-                      console.debug('[WS] applied queued answer after delay for', from);
-                      pendingRemoteDescriptions.current.delete(from);
-                    } catch (retryErr) {
-                      console.warn('[WS] retry also failed, creating new PC', retryErr);
-                      // Create fresh PC as last resort
-                      cleanupPeerConnection(from);
-                      createPeerConnection(from, peerUserName);
-                    }
-                  }
-                }, 500);
-              }
-            };
+            try {
+              await pc.setRemoteDescription(new RTCSessionDescription(data));
+              console.log(`[WS] applied remote answer for ${from}`);
 
-            if (pc.signalingState === 'have-local-offer' || pc.signalingState === 'have-local-pranswer') {
-              await applyAnswer(data);
-            } else {
-              console.warn('[WS] Received answer while pc in unexpected signalingState:', pc.signalingState, ' — queueing', from);
+              // Process any queued ICE candidates
+              const queuedCandidates = pendingIceCandidates.current.get(from) || [];
+              for (const candidate of queuedCandidates) {
+                try {
+                  await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                } catch (candidateErr) {
+                  console.warn('[WS] queued addIceCandidate failed', candidateErr);
+                }
+              }
+              pendingIceCandidates.current.delete(from);
+              
+            } catch (err) {
+              console.warn('[WS] setRemoteDescription(answer) failed, will retry', err);
               pendingRemoteDescriptions.current.set(from, data);
             }
             break;
@@ -421,7 +443,15 @@ export const useVideoChat = (roomId, userName) => {
             const pc = peerConnectionsRef.current.get(from);
             if (pc) {
               try {
-                await pc.addIceCandidate(new RTCIceCandidate(data));
+                if (pc.remoteDescription) {
+                  await pc.addIceCandidate(new RTCIceCandidate(data));
+                } else {
+                  // Queue ICE candidates if remote description isn't set yet
+                  if (!pendingIceCandidates.current.has(from)) {
+                    pendingIceCandidates.current.set(from, []);
+                  }
+                  pendingIceCandidates.current.get(from).push(data);
+                }
               } catch (err) {
                 console.warn('[WS] addIceCandidate failed', err);
               }
@@ -442,39 +472,22 @@ export const useVideoChat = (roomId, userName) => {
           }
 
           case 'leave': {
-            console.debug('[WS] peer left', from);
+            console.log('[WS] peer left', from);
             if (pinnedPeerId === from) setPinnedPeerId(null);
             cleanupPeerConnection(from);
             break;
           }
 
           case 'kicked': {
-            // Server-side kick: politely inform the user and redirect away
-            try {
-              const reason = message.reason || 'Removed by host';
-              // show alert and navigate to lobby (or homepage)
-              alert(`You were removed from the session. Reason: ${reason}`);
-            } catch (e) {
-              console.warn('kicked: failed to show alert', e);
-            }
-            // Ensure local cleanup and redirect to lobby
-            try {
-              if (wsRef.current) { wsRef.current.close(); }
-            } catch (e) {}
+            const reason = message.reason || 'Removed by host';
+            alert(`You were removed from the session. Reason: ${reason}`);
+            if (wsRef.current) { wsRef.current.close(); }
             navigate(`/lobby/${roomId}`);
             break;
           }
 
-          // FIXED: Add negotiation-failed handler
-          case 'negotiation-failed': {
-            console.warn('[WS] negotiation failed with', from, 'recreating connection');
-            cleanupPeerConnection(from);
-            createPeerConnection(from, peerUserName);
-            break;
-          }
-
           default:
-            console.debug('[WS] unknown type', type);
+            console.log('[WS] unknown type', type);
             break;
         }
       } catch (err) {
@@ -484,7 +497,8 @@ export const useVideoChat = (roomId, userName) => {
 
     ws.onclose = (ev) => {
       if (!isMountedRef.current) return;
-      console.debug('[WS] closed', ev.code, ev.reason);
+      console.log('[WS] closed', ev.code, ev.reason);
+      setConnectionStatus('disconnected');
       
       // Remove from global tracking
       if (connectionIdRef.current && activeConnections.has(roomId)) {
@@ -494,26 +508,32 @@ export const useVideoChat = (roomId, userName) => {
           activeConnections.delete(roomId);
         }
       }
+
+      // Attempt reconnection
+      if (isMountedRef.current && reconnectAttemptsRef.current < maxReconnectAttempts) {
+        reconnectAttemptsRef.current++;
+        const delay = Math.min(3000, reconnectAttemptsRef.current * 1000);
+        console.log(`[WS] attempting reconnection in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
+        
+        setTimeout(() => {
+          if (isMountedRef.current && roomId && userName) {
+            setupWebSocket();
+          }
+        }, delay);
+      }
     };
 
-    // FIXED: Better error handling with reconnection
     ws.onerror = (err) => {
       if (!isMountedRef.current) return;
       console.error('[WS] ws error', err);
-      
-      // Attempt reconnection after error
-      setTimeout(() => {
-        if (isMountedRef.current && roomId && userName) {
-          console.debug('[WS] attempting reconnection after error');
-          setupWebSocket();
-        }
-      }, 2000);
+      setConnectionStatus('error');
     };
-  }, [roomId, userName, cleanupPeerConnection, sendToServer, createPeerConnection, localPeerId, isScreenSharing, pinnedPeerId, navigate]);
+  }, [roomId, userName, cleanupPeerConnection, sendToServer, createPeerConnection, localPeerId, isScreenSharing, pinnedPeerId, navigate, isMicOn, isCameraOn]);
 
   // WebSocket effect - setup only when needed
   useEffect(() => {
     if (roomId && userName) {
+      setConnectionStatus('connecting');
       setupWebSocket();
     }
     
@@ -527,16 +547,20 @@ export const useVideoChat = (roomId, userName) => {
     let cancelled = false;
     const initMedia = async () => {
       try {
-        const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        const s = await navigator.mediaDevices.getUserMedia({ 
+          video: { width: 1280, height: 720 },
+          audio: true 
+        });
         if (cancelled) {
           s.getTracks().forEach(t => t.stop());
           return;
         }
         cameraStreamRef.current = s;
         setLocalStream(s);
-        console.debug('[useVideoChat] local media acquired');
+        console.log('[useVideoChat] local media acquired');
       } catch (err) {
         console.error('[useVideoChat] getUserMedia failed', err);
+        alert('Could not access camera/microphone. Please check permissions.');
       }
     };
     initMedia();
@@ -547,12 +571,13 @@ export const useVideoChat = (roomId, userName) => {
   useEffect(() => {
     const currentStream = isScreenSharing && screenStreamRef.current ? screenStreamRef.current : cameraStreamRef.current;
     if (!currentStream) return;
+    
     for (const [peerId, pc] of peerConnectionsRef.current.entries()) {
       try {
         currentStream.getTracks().forEach(track => {
           if (!pc.getSenders().some(snd => snd.track === track)) {
             pc.addTrack(track, currentStream);
-            console.debug('[useVideoChat] added local track to pc', peerId, track.kind);
+            console.log('[useVideoChat] added local track to pc', peerId, track.kind);
           }
         });
       } catch (err) {
@@ -561,7 +586,7 @@ export const useVideoChat = (roomId, userName) => {
     }
   }, [localStream, isScreenSharing]);
 
-  // screen share toggle - maintain both streams but only show the active one
+  // screen share toggle
   const handleToggleScreenShare = useCallback(async () => {
     if (isScreenSharing) {
       // Stop screen sharing and revert to camera
@@ -582,7 +607,10 @@ export const useVideoChat = (roomId, userName) => {
     }
 
     try {
-      const screen = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const screen = await navigator.mediaDevices.getDisplayMedia({ 
+        video: { cursor: 'always' },
+        audio: true 
+      });
       screenStreamRef.current = screen;
       
       setLocalStream(screen);
@@ -659,6 +687,12 @@ export const useVideoChat = (roomId, userName) => {
     setPlaybackEnabled(true);
   }, []);
 
+  const reconnect = useCallback(() => {
+    if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+      setupWebSocket();
+    }
+  }, [setupWebSocket]);
+
   return {
     localPeerId,
     localStream: getDisplayStream(),
@@ -681,9 +715,9 @@ export const useVideoChat = (roomId, userName) => {
     hasScreenShare: !!screenStreamRef.current,
     hasCamera: !!cameraStreamRef.current,
     getCurrentStream: getDisplayStream,
+    connectionStatus,
+    reconnect,
+    reconnectAttempts: reconnectAttemptsRef.current,
+    maxReconnectAttempts
   };
-
 };
-
-
-
