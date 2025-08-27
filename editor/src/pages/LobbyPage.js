@@ -135,7 +135,7 @@ const LobbyPage = () => {
         try { videoRef.current.srcObject = null; } catch (e) {}
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  
   }, [id]);
 
   const toggleMic = () => {

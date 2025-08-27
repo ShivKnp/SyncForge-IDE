@@ -190,7 +190,7 @@ const useEditorState = (id, userName) => {
     // guard
     if (!id || !userName) return;
 
-    // Create websocket and shareDB connection
+   // Create websocket and shareDB connection
     const ws = new ReconnectingWebSocket(`${WEBSOCKET_URL}/sharedb`);
     wsRef.current = ws;
     connectionRef.current = new ShareDB.Connection(ws);
@@ -370,7 +370,6 @@ const useEditorState = (id, userName) => {
       connectionRef.current = null;
       wsRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, userName, navigate]);
 
   useEffect(() => {

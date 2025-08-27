@@ -62,7 +62,7 @@ const TerminalPanel = ({ sessionId, visible = false, onToggle, onClose }) => {
       try { fitAddonRef.current?.fit(); } catch (e) {}
       try { termRef.current?.focus(); } catch (e) {}
     }, 120);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, [visible]);
 
   // xterm + websocket setup (keeps connection persistent while mounted)
@@ -113,7 +113,7 @@ const TerminalPanel = ({ sessionId, visible = false, onToggle, onClose }) => {
       try { if (ws && ws.readyState === WebSocket.OPEN) ws.close(); } catch (e) {}
       try { if (term) term.dispose(); } catch (e) {}
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, [sessionId]);
 
   useEffect(() => {
