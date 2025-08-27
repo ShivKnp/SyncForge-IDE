@@ -19,7 +19,27 @@ const { shareWebSocketHandler, ensureSessionExists, connection, kickParticipant,
 const PORT = process.env.PORT || 8080;
 const app = express();
 
-app.use(cors({ origin: true, credentials: true }));
+// server.js - Update CORS to be more permissive for testing
+app.use(cors({ 
+  origin: function (origin, callback) {
+    // Allow all origins during development, restrict in production
+    if (!origin || process.env.NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      // Production: allow your Vercel domain and Render domain
+      const allowedOrigins = [
+        'https://sync-forge-ide.vercel.app',
+        'https://syncforge-ide.onrender.com'
+      ];
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    }
+  },
+  credentials: true 
+}));
 app.use(bodyParser.json());
 
 
@@ -191,4 +211,5 @@ server.on('upgrade', (request, socket, head) => {
     console.warn('[upgrade] Unknown WS path:', pathname);
     socket.destroy();
   }
+
 });
