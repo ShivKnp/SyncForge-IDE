@@ -65,6 +65,7 @@ async function safeExtractZip(zipPath, destDir) {
   return { extracted: entries.length };
 }
 
+router.options('/:id/upload', cors(corsOptions));
 router.post('/:id/upload', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ ok: false, error: 'No file uploaded.' });
 
@@ -119,3 +120,4 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
 });
 
 module.exports = router;
+
