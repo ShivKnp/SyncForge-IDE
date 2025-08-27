@@ -10,13 +10,20 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { FaComment, FaTimes } from "react-icons/fa";
 
 // Backend / WS config
+// Backend / WS config
+// Backend / WS config
 const CHAT_WS = (() => {
+  // explicit env override (recommended in Vercel)
   if (process.env.REACT_APP_CHAT_WS) return process.env.REACT_APP_CHAT_WS.replace(/\/$/, '');
-  const host = window.location.hostname;
-  const backendPort = process.env.REACT_APP_BACKEND_PORT || '8080';
+  // default to your Render backend domain (no :8080) — secure WS on HTTPS
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${host}:${backendPort}`;
+  const renderHost = 'syncforge-ide.onrender.com';
+  // If you host backend on same origin in some env, you can use window.location.host
+  // but for production explicitly use Render host:
+  return `${proto}://${renderHost}`;
 })();
+
+
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8080';
 
@@ -539,5 +546,6 @@ ChatPanel.propTypes = {
   onUploadDone: PropTypes.func,
   onUnreadChange: PropTypes.func
 };
+
 
 export default ChatPanel;
