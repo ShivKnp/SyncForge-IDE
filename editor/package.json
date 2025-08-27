@@ -67,13 +67,5 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
-  },
-  "eslintConfig": {
-  "extends": [
-    "react-app",
-    "plugin:react-hooks/recommended"
-  ],
-  "plugins": ["react-hooks"]
-}
-
+  }
 }

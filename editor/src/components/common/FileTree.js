@@ -33,8 +33,7 @@ const TreeNode = ({
   dragOver,
   onContextMenu
 }) => {
-
-   const [isExpanded, setIsExpanded] = React.useState(depth < 2);
+  const [isExpanded, setIsExpanded] = React.useState(depth < 2);
   if (!node) return null;
   
   // Skip rendering if node doesn't match search term (unless it's a parent of a matching node)
@@ -44,7 +43,7 @@ const TreeNode = ({
   const isSelected = nodeId === selectedNodeId;
   const isActive = nodeId === activeFileId;
   const isFolder = node.type === 'folder';
- 
+  
 
   const handleSelect = (e) => { 
     e.stopPropagation(); 
@@ -421,4 +420,3 @@ const FileTree = ({ tree, selectedNodeId, onSelectNode, onCreateFile, onCreateFo
 };
 
 export default FileTree;
-
